@@ -11,7 +11,7 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = "7312421368";
 
 app.get("/", (req, res) => {
-  res.send("Bot is running 🚀");
+  res.send("Bot is running V2 🚀");
 });
 
 app.get("/send", async (req, res) => {
