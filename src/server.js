@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const TOKEN = process.env.TELEGRAM_TOKEN;
+const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = "7312421368";
 
 app.get("/", (req, res) => {
