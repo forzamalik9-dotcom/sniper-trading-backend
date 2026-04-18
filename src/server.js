@@ -1,30 +1,32 @@
 import express from "express";
-import cors from "cors";
+import axios from "axios";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 const app = express();
-
-app.use(cors());
 app.use(express.json());
 
-// Test
+const TOKEN = process.env.TELEGRAM_TOKEN;
+const CHAT_ID = "7312421368";
+
 app.get("/", (req, res) => {
-  res.send("Sniper Backend LIVE 🚀");
+  res.send("Bot is running 🚀");
 });
 
-// Health check (debug API)
-app.get("/health", (req, res) => {
-  res.json({
-    status: "OK",
-    api: "running",
-    twelveKey: process.env.TWELVE_API_KEY ? "FOUND" : "MISSING"
-  });
+app.get("/send", async (req, res) => {
+  try {
+    await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+      chat_id: CHAT_ID,
+      text: "🔥 Bot connecté avec succès !"
+    });
+
+    res.send("Message envoyé !");
+  } catch (error) {
+    res.send("Erreur: " + error.message);
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server running");
 });
