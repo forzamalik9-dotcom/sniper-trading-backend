@@ -876,4 +876,270 @@ Scenario: ${scenario}
 - Price in premium discount zone
 - Momentum expansion active
 
-━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━
+
+💧 Liquidity & Execution:
+- ${liquidityText}
+- Reversal from engineered liquidity zone
+- FVG respected (clean imbalance)
+- Entry aligned with smart money positioning
+
+━━━━━━━━━━━━━━━━━━━
+
+⏱️ Timing:
+- ${session} active
+- Volatility controlled
+- No abnormal wick expansion
+
+━━━━━━━━━━━━━━━━━━━
+
+📌 Status: ${status}
+
+⚠️ Vérifie le calendrier économique avant d’entrer en position.`;
+}
+
+// =========================
+// ANALYSIS ENGINE
+// =========================
+async function runAnalysis(symbolInput, styleInput = "SCALPING") {
+  const symbol = normalizeSymbol(symbolInput || "EUR/USD");
+  const styleConfig = detectStyleConfig(styleInput);
+  const session = detectSession();
+  const killZone = isKillZoneActive();
+
+  const quote = await fetchQuote(symbol);
+  if (quote.code) {
+    throw new Error(quote.message || "Unable to fetch quote");
+  }
+
+  const livePrice = toNum(quote.close);
+
+  const [entryRaw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
+    fetchTimeSeries(symbol, styleConfig.entryTf, 100),
+    fetchTimeSeries(symbol, "1h", 100),
+    fetchTimeSeries(symbol, "4h", 100),
+    fetchTimeSeries(symbol, "1day", 100),
+    fetchDxyData()
+  ]);
+
+  const entryTf = analyzeStructure(parseCandles(entryRaw.values || []));
+  const h1 = analyzeStructure(parseCandles(h1Raw.values || []));
+  const h4 = analyzeStructure(parseCandles(h4Raw.values || []));
+  const d1 = analyzeStructure(parseCandles(d1Raw.values || []));
+
+  const volatility = computeVolatilityState(parseCandles(entryRaw.values || []));
+  const assetBias = computeAssetBias(symbol, dxy.bias, h1.bias, h4.bias);
+  const btmm = computeBtmmScore({ h1, h4, d1, killZone });
+  const smc = computeSmcScore({ h1, entryTf, killZone });
+  const scenario = decideScenario(h1, h4, assetBias);
+
+  const decision = computeDecision({
+    styleConfig,
+    dxyScore: dxy.score,
+    btmmScore: btmm.score,
+    smcScore: smc.score,
+    assetBias,
+    scenario,
+    killZone,
+    volatility
+  });
+
+  const tradeLevels = computeTradeLevels(symbol, livePrice, decision.finalDecision, entryTf);
+
+  return {
+    ok: true,
+    symbol,
+    style: styleConfig.style,
+    session,
+    livePrice,
+    dxy,
+    btmm,
+    smc,
+    total: decision.total,
+    scenario,
+    decision: decision.finalDecision,
+    status: decision.status,
+    reason: decision.reason,
+    tradeLevels,
+    volatility,
+    structure: {
+      entryTf,
+      h1,
+      h4,
+      d1
+    }
+  };
+}
+
+async function runAutoAnalysis(symbolInput) {
+  const scalping = await runAnalysis(symbolInput, "SCALPING");
+  const intrading = await runAnalysis(symbolInput, "INTRADING");
+
+  const scalpValid = ["BUY", "SELL"].includes(scalping.decision);
+  const intraValid = ["BUY", "SELL"].includes(intrading.decision);
+
+  if (scalpValid && intraValid) {
+    return scalping.total >= intrading.total ? scalping : intrading;
+  }
+
+  if (scalpValid) return scalping;
+  if (intraValid) return intrading;
+
+  return scalping.total >= intrading.total ? scalping : intrading;
+}
+
+// =========================
+// TELEGRAM
+// =========================
+async function sendTelegramMessage(text) {
+  const response = await axios.post(
+    `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
+    {
+      chat_id: CHAT_ID,
+      text
+    }
+  );
+  return response.data;
+}
+
+// =========================
+// ROUTES
+// =========================
+app.get("/", (req, res) => {
+  res.send("SNIPER ELITE AI backend is running 🚀");
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    api: "running",
+    telegramToken: TELEGRAM_TOKEN ? "FOUND" : "MISSING",
+    twelveApiKey: TWELVE_API_KEY ? "FOUND" : "MISSING"
+  });
+});
+
+app.get("/send-test", async (req, res) => {
+  try {
+    const telegram = await sendTelegramMessage("✅ Test Telegram réussi depuis SNIPER ELITE AI");
+    res.json({ ok: true, telegram });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message,
+      telegramStatus: error.response?.status || null,
+      telegramData: error.response?.data || null
+    });
+  }
+});
+
+app.get("/price", async (req, res) => {
+  try {
+    const symbol = normalizeSymbol(req.query.symbol || "EUR/USD");
+    const quote = await fetchQuote(symbol);
+
+    if (quote.code) {
+      return res.status(400).json({
+        ok: false,
+        message: quote.message || "Unable to fetch quote"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      symbol,
+      livePrice: toNum(quote.close)
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: error.message,
+      data: error.response?.data || null
+    });
+  }
+});
+
+app.get("/analyze-live", async (req, res) => {
+  try {
+    const symbol = req.query.symbol || "EUR/USD";
+    const style = req.query.style || "AUTO";
+
+    const result =
+      String(style).toUpperCase() === "AUTO"
+        ? await runAutoAnalysis(symbol)
+        : await runAnalysis(symbol, style);
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message,
+      data: error.response?.data || null
+    });
+  }
+});
+
+app.get("/send-signal", async (req, res) => {
+  try {
+    const symbol = req.query.symbol || "EUR/USD";
+    const style = req.query.style || "AUTO";
+
+    const result =
+      String(style).toUpperCase() === "AUTO"
+        ? await runAutoAnalysis(symbol)
+        : await runAnalysis(symbol, style);
+
+    const message = buildTelegramMessage(result);
+    const telegram = await sendTelegramMessage(message);
+
+    res.json({
+      ok: true,
+      sent: true,
+      result,
+      telegram
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message,
+      telegramStatus: error.response?.status || null,
+      telegramData: error.response?.data || null
+    });
+  }
+});
+
+app.get("/scan-all-live", async (req, res) => {
+  try {
+    const style = req.query.style || "AUTO";
+    const results = [];
+
+    for (const symbol of DEFAULT_SYMBOLS) {
+      const result =
+        String(style).toUpperCase() === "AUTO"
+          ? await runAutoAnalysis(symbol)
+          : await runAnalysis(symbol, style);
+
+      results.push(result);
+
+      if (["BUY", "SELL"].includes(result.decision)) {
+        const message = buildTelegramMessage(result);
+        await sendTelegramMessage(message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      style,
+      scanned: DEFAULT_SYMBOLS,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message
+    });
+  }
+});
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server running 🚀");
+});
