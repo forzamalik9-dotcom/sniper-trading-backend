@@ -11,12 +11,19 @@ async function run() {
 
   console.log("Calling:", url);
 
-  const response = await axios.get(url, {
-    timeout: 60000
-  });
+  try {
+    const response = await axios.get(url, {
+      timeout: 10000 // ⬅️ réduit pour debug
+    });
 
-  console.log("SCAN OK");
-  console.log(JSON.stringify(response.data, null, 2));
+    console.log("RESPONSE RECEIVED");
+    console.log("STATUS:", response.status);
+    console.log("DATA:", JSON.stringify(response.data).slice(0, 200));
+
+  } catch (error) {
+    console.error("REQUEST ERROR:");
+    console.error(error.message);
+  }
 }
 
 run()
@@ -24,8 +31,7 @@ run()
     console.log("JOB DONE");
     process.exit(0);
   })
-  .catch((error) => {
-    console.error("SCAN FAILED");
-    console.error(error.response?.data || error.message);
+  .catch((err) => {
+    console.error("FATAL ERROR:", err.message);
     process.exit(1);
   });
