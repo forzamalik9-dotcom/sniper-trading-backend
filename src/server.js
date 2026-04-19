@@ -48,6 +48,79 @@ app.get("/send-test", async (req, res) => {
   }
 });
 
+async function fetchQuote(symbol) {
+  const url = "https://api.twelvedata.com/quote";
+  const response = await axios.get(url, {
+    params: {
+      symbol,
+      apikey: TWELVE_API_KEY
+    }
+  });
+  return response.data;
+}
+
+async function fetchDxyData() {
+  const attempts = [
+    { symbol: "DXY", source: "DXY" },
+    { symbol: "UUP", source: "UUP_PROXY" }
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const data = await fetchQuote(attempt.symbol);
+
+      if (data && !data.code && data.close) {
+        const price = Number(data.close);
+        const previousClose = Number(data.previous_close || data.close);
+        const change = price - previousClose;
+
+        let bias = "neutral";
+        if (change > 0) bias = "bullish";
+        if (change < 0) bias = "bearish";
+
+        let score = 5;
+        if (bias !== "neutral") score += 2;
+        if (Math.abs(change) > 0.1) score += 1;
+        if (Math.abs(change) > 0.2) score += 1;
+        if (Math.abs(change) > 0.3) score += 1;
+
+        if (score > 10) score = 10;
+
+        return {
+          ok: true,
+          symbol: attempt.symbol,
+          source: attempt.source,
+          price,
+          previousClose,
+          change,
+          bias,
+          score
+        };
+      }
+    } catch (error) {
+      continue;
+    }
+  }
+
+  return {
+    ok: false,
+    source: "UNAVAILABLE",
+    message: "DXY data unavailable"
+  };
+}
+
+app.get("/dxy", async (req, res) => {
+  try {
+    const dxy = await fetchDxyData();
+    res.json(dxy);
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
