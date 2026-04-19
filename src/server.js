@@ -937,13 +937,27 @@ async function runAnalysis(symbolInput, styleInput = "SCALPING") {
 
   const livePrice = toNum(quote.close);
 
-  const [entryRaw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
+let entryRaw, h1Raw, h4Raw, d1Raw, dxy;
+
+try {
+  [entryRaw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
     fetchTimeSeries(symbol, styleConfig.entryTf, 100),
     fetchTimeSeries(symbol, "1h", 100),
     fetchTimeSeries(symbol, "4h", 100),
     fetchTimeSeries(symbol, "1day", 100),
     fetchDxyData()
   ]);
+} catch (error) {
+  console.log("TimeSeries error:", error.message);
+
+  return {
+    symbol,
+    decision: "WAIT",
+    total: 0,
+    status: "DATA ERROR",
+    reason: "Failed to fetch market data (weekend or API issue)"
+  };
+}
 
   const entryTf = analyzeStructure(parseCandles(entryRaw.values || []));
   const h1 = analyzeStructure(parseCandles(h1Raw.values || []));
