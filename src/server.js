@@ -907,9 +907,32 @@ async function runAnalysis(symbolInput, styleInput = "SCALPING") {
   const session = detectSession();
   const killZone = isKillZoneActive();
 
-  const quote = await fetchQuote(symbol);
-  if (quote.code) {
-    throw new Error(quote.message || "Unable to fetch quote");
+  let quote;
+
+  try {
+    quote = await fetchQuote(symbol);
+
+    if (!quote || quote.code || !quote.close) {
+      console.log(`API issue for ${symbol}`, quote);
+
+      return {
+        symbol,
+        decision: "WAIT",
+        total: 0,
+        status: "MARKET CLOSED",
+        reason: "Market closed or API unavailable (weekend)"
+      };
+    }
+  } catch (error) {
+    console.log(`Fetch error for ${symbol}`, error.message);
+
+    return {
+      symbol,
+      decision: "WAIT",
+      total: 0,
+      status: "ERROR",
+      reason: "API request failed"
+    };
   }
 
   const livePrice = toNum(quote.close);
