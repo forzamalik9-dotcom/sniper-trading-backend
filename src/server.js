@@ -294,6 +294,71 @@ app.get("/send-test", async (req, res) => {
       telegramData: error.response?.data || null
     });
   }
+});app.get("/send-signal", async (req, res) => {
+  try {
+    const symbol = req.query.symbol || "EUR/USD";
+    const styleConfig = detectStyleConfig(req.query.style);
+
+    // 📊 Fetch market data
+    const m5Raw = await axios.get("https://api.twelvedata.com/time_series", {
+      params: {
+        symbol,
+        interval: "5min",
+        outputsize: 50,
+        apikey: TWELVE_API_KEY
+      }
+    });
+
+    const candles = parseCandles(m5Raw.data.values || []);
+
+    // 🔥 NEWS FILTER
+    const newsStatus = getNewsStatus(symbol, styleConfig);
+
+    // 🔥 VOLATILITY CHECK
+    const volatility = computePostNewsVolatilityState(candles);
+
+    // 🔥 MOCK SCORES (temporaire)
+    const dxy = { score: 8, bias: "bearish" };
+    const btmm = { score: 25 };
+    const smc = { score: 7 };
+
+    const total = dxy.score + btmm.score + smc.score;
+    const scenario = "Manipulation";
+
+    const decision = "WAIT";
+
+    const result = {
+      symbol,
+      decision,
+      total,
+      scenario,
+      dxy,
+      btmm,
+      smc,
+      tradeLevels: {},
+      newsStatus,
+      volatility,
+      style: styleConfig.style
+    };
+
+    const message = buildTelegramMessage(result);
+
+    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      chat_id: CHAT_ID,
+      text: message
+    });
+
+    res.json({
+      ok: true,
+      message
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
 });
 
 app.get("/price", async (req, res) => {
