@@ -7,29 +7,32 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TWELVE_API_KEY = process.env.TWELVE_API_KEY;
 const CHAT_ID = "7312421368";
 
 app.get("/", (req, res) => {
-  res.send("Bot is running 🚀");
+  res.send("SNIPER ELITE AI backend is running 🚀");
 });
 
-app.get("/debug", (req, res) => {
+app.get("/health", async (req, res) => {
   res.json({
-    tokenExists: !!TOKEN,
-    tokenPrefix: TOKEN ? TOKEN.slice(0, 10) : null,
-    chatId: CHAT_ID
+    status: "OK",
+    api: "running",
+    telegramToken: TELEGRAM_TOKEN ? "FOUND" : "MISSING",
+    twelveApiKey: TWELVE_API_KEY ? "FOUND" : "MISSING"
   });
 });
 
-app.get("/send", async (req, res) => {
+app.get("/send-test", async (req, res) => {
   try {
-    const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
-
-    const response = await axios.post(url, {
-      chat_id: CHAT_ID,
-      text: "🔥 Bot connecté avec succès !"
-    });
+    const response = await axios.post(
+      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
+      {
+        chat_id: CHAT_ID,
+        text: "✅ Test Telegram réussi depuis SNIPER ELITE AI"
+      }
+    );
 
     res.json({
       ok: true,
@@ -40,13 +43,13 @@ app.get("/send", async (req, res) => {
       ok: false,
       message: error.message,
       telegramStatus: error.response?.status || null,
-      telegramData: error.response?.data || null,
-      tokenExists: !!TOKEN,
-      tokenPrefix: TOKEN ? TOKEN.slice(0, 10) : null
+      telegramData: error.response?.data || null
     });
   }
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running 🚀");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT} 🚀`);
 });
