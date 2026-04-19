@@ -11,6 +11,9 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TWELVE_API_KEY = process.env.TWELVE_API_KEY;
 const CHAT_ID = "7312421368";
 
+const NEWS_BLOCK_MINUTES_BEFORE = 30;
+const NEWS_BLOCK_MINUTES_AFTER = 30;
+
 app.get("/", (req, res) => {
   res.send("SNIPER ELITE AI backend is running 🚀");
 });
@@ -49,18 +52,19 @@ app.get("/send-test", async (req, res) => {
 });
 
 function normalizeSymbol(input) {
-  const value = String(input).toUpperCase();
+  const value = String(input || "").toUpperCase().replace("/", "");
 
   const map = {
     EURUSD: "EUR/USD",
     GBPUSD: "GBP/USD",
     XAUUSD: "XAU/USD",
     NAS100: "IXIC",
+    IXIC: "IXIC",
     DXY: "DXY",
     UUP: "UUP"
   };
 
-  return map[value] || value;
+  return map[value] || input;
 }
 
 async function fetchQuote(symbol) {
@@ -74,7 +78,7 @@ async function fetchQuote(symbol) {
   return response.data;
 }
 
-async function fetchTimeSeries(symbol, interval = "1h", outputsize = 50) {
+async function fetchTimeSeries(symbol, interval = "1h", outputsize = 100) {
   const url = "https://api.twelvedata.com/time_series";
   const response = await axios.get(url, {
     params: {
@@ -139,14 +143,16 @@ async function fetchDxyData() {
 }
 
 function parseCandles(values = []) {
-  return values.map((candle) => ({
-    datetime: candle.datetime,
-    open: Number(candle.open),
-    high: Number(candle.high),
-    low: Number(candle.low),
-    close: Number(candle.close),
-    volume: candle.volume ? Number(candle.volume) : null
-  }));
+  return values
+    .map((candle) => ({
+      datetime: candle.datetime,
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+      volume: candle.volume ? Number(candle.volume) : null
+    }))
+    .reverse();
 }
 
 function average(values = []) {
@@ -154,63 +160,8 @@ function average(values = []) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function analyzeStructure(candles = []) {
-  if (!candles || candles.length < 10) {
-    return {
-      bias: "neutral",
-      high: null,
-      low: null,
-      lastClose: null,
-      momentum: "weak",
-      structureQuality: "low",
-      swingHigh: null,
-      swingLow: null
-    };
-  }
-
-  const ordered = [...candles].reverse();
-  const closes = ordered.map((c) => c.close);
-  const highs = ordered.map((c) => c.high);
-  const lows = ordered.map((c) => c.low);
-
-  const lastClose = closes[closes.length - 1];
-  const firstClose = closes[0];
-  const high = Math.max(...highs);
-  const low = Math.min(...lows);
-
-  const recentCloses = closes.slice(-5);
-  const previousCloses = closes.slice(-10, -5);
-
-  const recentAvg = average(recentCloses);
-  const previousAvg = average(previousCloses);
-
-  let bias = "neutral";
-  if (lastClose > firstClose && recentAvg >= previousAvg) bias = "bullish";
-  if (lastClose < firstClose && recentAvg <= previousAvg) bias = "bearish";
-
-  const movePct = ((lastClose - firstClose) / firstClose) * 100;
-
-  let momentum = "weak";
-  if (Math.abs(movePct) > 0.15) momentum = "medium";
-  if (Math.abs(movePct) > 0.35) momentum = "strong";
-
-  let structureQuality = "low";
-  if (Math.abs(movePct) > 0.10) structureQuality = "medium";
-  if (Math.abs(movePct) > 0.25) structureQuality = "high";
-
-  const swingHigh = Math.max(...highs.slice(-10));
-  const swingLow = Math.min(...lows.slice(-10));
-
-  return {
-    bias,
-    high,
-    low,
-    lastClose,
-    momentum,
-    structureQuality,
-    swingHigh,
-    swingLow
-  };
+function getRange(high, low) {
+  return Math.max(high - low, 0.0000001);
 }
 
 function detectSession() {
@@ -227,24 +178,138 @@ function isKillZoneActive() {
   return session === "London" || session === "New York" || session === "London/New York";
 }
 
+function analyzeStructure(candles = []) {
+  if (!candles || candles.length < 20) {
+    return {
+      bias: "neutral",
+      lastClose: null,
+      swingHigh: null,
+      swingLow: null,
+      structureQuality: "low",
+      momentum: "weak"
+    };
+  }
+
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+
+  const firstClose = closes[0];
+  const lastClose = closes[closes.length - 1];
+
+  const recent5 = closes.slice(-5);
+  const recent10 = closes.slice(-10);
+  const previous10 = closes.slice(-20, -10);
+
+  const recentAvg = average(recent10);
+  const previousAvg = average(previous10);
+
+  let bias = "neutral";
+  if (lastClose > firstClose && recentAvg >= previousAvg) bias = "bullish";
+  if (lastClose < firstClose && recentAvg <= previousAvg) bias = "bearish";
+
+  const movePct = ((lastClose - firstClose) / firstClose) * 100;
+
+  let momentum = "weak";
+  if (Math.abs(movePct) > 0.10) momentum = "medium";
+  if (Math.abs(movePct) > 0.25) momentum = "strong";
+
+  let structureQuality = "low";
+  if (Math.abs(movePct) > 0.08) structureQuality = "medium";
+  if (Math.abs(movePct) > 0.20) structureQuality = "high";
+
+  return {
+    bias,
+    lastClose,
+    swingHigh: Math.max(...highs.slice(-15)),
+    swingLow: Math.min(...lows.slice(-15)),
+    high: Math.max(...highs),
+    low: Math.min(...lows),
+    recent5Avg: average(recent5),
+    structureQuality,
+    momentum
+  };
+}
+
+function detectLiquiditySweep(tf) {
+  if (!tf?.lastClose || !tf?.swingHigh || !tf?.swingLow) {
+    return {
+      hasSweep: false,
+      side: "none"
+    };
+  }
+
+  const nearHigh = Math.abs(tf.lastClose - tf.swingHigh) / tf.lastClose < 0.0015;
+  const nearLow = Math.abs(tf.lastClose - tf.swingLow) / tf.lastClose < 0.0015;
+
+  if (nearHigh) {
+    return { hasSweep: true, side: "BSL" };
+  }
+
+  if (nearLow) {
+    return { hasSweep: true, side: "SSL" };
+  }
+
+  return {
+    hasSweep: false,
+    side: "none"
+  };
+}
+
+function detectFibZone(tf) {
+  if (!tf?.high || !tf?.low || !tf?.lastClose) {
+    return { valid: false, level: null };
+  }
+
+  const range = getRange(tf.high, tf.low);
+  const position = (tf.lastClose - tf.low) / range;
+
+  const targets = [0.5, 0.618, 0.705];
+  for (const t of targets) {
+    if (Math.abs(position - t) < 0.12) {
+      return { valid: true, level: t };
+    }
+  }
+
+  return { valid: false, level: null };
+}
+
+function detectFvgProxy(tf) {
+  if (!tf?.structureQuality) return false;
+  return tf.structureQuality === "high" || tf.structureQuality === "medium";
+}
+
+function detectTbs(higherTf, lowerTf) {
+  if (!higherTf?.bias || !lowerTf?.bias) return false;
+  return higherTf.bias !== "neutral" && higherTf.bias === lowerTf.bias;
+}
+
+function computeDxyBiasForAsset(symbol, dxyBias) {
+  const inverseDollarAssets = ["EUR/USD", "GBP/USD", "XAU/USD"];
+
+  if (symbol === "IXIC") return "neutral";
+  if (!inverseDollarAssets.includes(symbol)) return "neutral";
+
+  if (dxyBias === "bearish") return "bullish";
+  if (dxyBias === "bullish") return "bearish";
+  return "neutral";
+}
+
 function computeAssetBias(symbol, dxyBias, h1Bias, h4Bias) {
-  const forexGold = ["EUR/USD", "GBP/USD", "XAU/USD"];
+  const macroBias = computeDxyBiasForAsset(symbol, dxyBias);
 
   if (symbol === "IXIC") {
     if (h1Bias === h4Bias && h1Bias !== "neutral") return h1Bias;
     return "neutral";
   }
 
-  if (forexGold.includes(symbol)) {
-    if (dxyBias === "bearish") {
-      if (h1Bias === "bullish" || h4Bias === "bullish") return "bullish";
-    }
-    if (dxyBias === "bullish") {
-      if (h1Bias === "bearish" || h4Bias === "bearish") return "bearish";
+  if (macroBias !== "neutral") {
+    if (h1Bias === macroBias || h4Bias === macroBias) {
+      return macroBias;
     }
   }
 
-  if (h1Bias === h4Bias) return h1Bias;
+  if (h1Bias === h4Bias && h1Bias !== "neutral") return h1Bias;
   return "neutral";
 }
 
@@ -254,63 +319,69 @@ function computeBtmmScore({ h1, h4, d1, killZone }) {
 
   if (h4.structureQuality === "high") {
     score += 4;
-    notes.push("HTF structure clear");
+    notes.push("Structure HTF claire");
   } else if (h4.structureQuality === "medium") {
     score += 2;
-    notes.push("HTF structure acceptable");
+    notes.push("Structure HTF acceptable");
   }
 
   if (h1.bias === h4.bias && h1.bias !== "neutral") {
     score += 4;
-    notes.push("BTMM aligned");
-  }
-
-  if (h1.momentum === "strong" || h4.momentum === "strong") {
-    score += 2;
-    notes.push("Momentum present");
+    notes.push("BTMM complet");
   }
 
   if (h1.structureQuality !== "low") {
     score += 2;
-    notes.push("EMA alignment proxy");
+    notes.push("EMA alignées proxy");
   }
 
-  if (Math.abs((h1.lastClose - h1.low) / (h1.high - h1.low || 1)) < 0.2 ||
-      Math.abs((h1.high - h1.lastClose) / (h1.high - h1.low || 1)) < 0.2) {
+  const range = getRange(h1.high, h1.low);
+  const pos = (h1.lastClose - h1.low) / range;
+  if (pos < 0.2 || pos > 0.8) {
     score += 2;
-    notes.push("RSI extreme proxy");
+    notes.push("RSI extrême proxy");
   }
 
-  if (h1.momentum !== "weak") {
+  if (h1.momentum === "strong" || h4.momentum === "strong") {
     score += 2;
-    notes.push("Volume proxy strong");
+    notes.push("Volume fort proxy");
   }
 
-  if (h1.structureQuality === "high") {
+  if (detectFvgProxy(h1)) {
     score += 2;
-    notes.push("FVG proxy present");
+    notes.push("FVG présent");
   }
 
   if (h1.bias === h4.bias && h4.bias === d1.bias && h1.bias !== "neutral") {
     score += 3;
-    notes.push("Multi TF confluence");
+    notes.push("Multi TF FVG / confluence");
   }
 
-  if (Math.abs(h1.lastClose - h1.swingHigh) / (h1.lastClose || 1) < 0.002 ||
-      Math.abs(h1.lastClose - h1.swingLow) / (h1.lastClose || 1) < 0.002) {
+  const liqDist =
+    Math.min(
+      Math.abs(h1.lastClose - h1.swingHigh),
+      Math.abs(h1.lastClose - h1.swingLow)
+    ) / h1.lastClose;
+
+  if (liqDist < 0.002) {
     score += 2;
-    notes.push("Liquidity visible");
+    notes.push("Liquidité visible");
   }
 
-  if (Math.abs(h1.lastClose - h4.swingHigh) / (h1.lastClose || 1) < 0.004 ||
-      Math.abs(h1.lastClose - h4.swingLow) / (h1.lastClose || 1) < 0.004) {
+  const obDist =
+    Math.min(
+      Math.abs(h1.lastClose - h4.swingHigh),
+      Math.abs(h1.lastClose - h4.swingLow)
+    ) / h1.lastClose;
+
+  if (obDist < 0.004) {
     score += 2;
-    notes.push("Order block proxy");
+    notes.push("Order Block proche");
   }
 
   if (h1.bias === h4.bias && h1.momentum !== "weak") {
     score += 3;
-    notes.push("Confluence strong");
+    notes.push("Confluence forte");
   }
 
   if (killZone) {
@@ -320,7 +391,7 @@ function computeBtmmScore({ h1, h4, d1, killZone }) {
 
   if (h1.bias === h4.bias && h1.structureQuality === "high") {
     score += 2;
-    notes.push("Alignment bonus");
+    notes.push("Bonus alignement");
   }
 
   if (score > 30) score = 30;
@@ -328,60 +399,53 @@ function computeBtmmScore({ h1, h4, d1, killZone }) {
   return { score, notes };
 }
 
-function computeSmcScore({ h1, m5, killZone }) {
+function computeSmcScore({ h1, lowerTf, killZone }) {
   let score = 0;
   const notes = [];
 
   if (h1.bias !== "neutral") {
     score += 1;
-    notes.push("H1 alignment valid");
+    notes.push("Alignement H1");
   }
 
-  const hasSweep =
-    Math.abs(m5.lastClose - m5.swingHigh) / (m5.lastClose || 1) < 0.0015 ||
-    Math.abs(m5.lastClose - m5.swingLow) / (m5.lastClose || 1) < 0.0015;
-
-  if (hasSweep) {
+  const sweep = detectLiquiditySweep(lowerTf);
+  if (sweep.hasSweep) {
     score += 2;
-    notes.push("CRT sweep proxy valid");
+    notes.push(`CRT sweep ${sweep.side}`);
   }
 
-  if (m5.bias === h1.bias && m5.bias !== "neutral") {
+  if (detectTbs(h1, lowerTf)) {
     score += 2;
-    notes.push("TBS confirmed");
+    notes.push("TBS confirmé");
   }
 
-  if (m5.structureQuality !== "low") {
+  if (detectFvgProxy(lowerTf)) {
     score += 1;
-    notes.push("FVG proxy intact");
+    notes.push("FVG intacte proxy");
   }
 
   if (killZone) {
     score += 1;
-    notes.push("London/NY session active");
+    notes.push("Session London/NY");
   }
 
-  if (m5.momentum !== "weak") {
+  if (lowerTf.momentum !== "weak") {
     score += 1;
-    notes.push("M5 CHoCH proxy valid");
+    notes.push("CHoCH proxy");
   }
 
-  if (m5.structureQuality === "high") {
+  if (lowerTf.structureQuality === "high") {
     score += 1;
-    notes.push("Timing clean");
+    notes.push("Timing propre");
   }
 
-  if (
-    Math.abs((m5.lastClose - m5.low) / (m5.high - m5.low || 1) - 0.5) < 0.25 ||
-    Math.abs((m5.lastClose - m5.low) / (m5.high - m5.low || 1) - 0.618) < 0.25 ||
-    Math.abs((m5.lastClose - m5.low) / (m5.high - m5.low || 1) - 0.705) < 0.25
-  ) {
+  const fib = detectFibZone(lowerTf);
+  if (fib.valid) {
     score += 1;
-    notes.push("Fibonacci zone valid");
+    notes.push(`Fibonacci ${fib.level}`);
   }
 
   if (score > 10) score = 10;
-
   return { score, notes };
 }
 
@@ -397,8 +461,38 @@ function decideScenario(h1, h4, assetBias) {
   return "Manipulation";
 }
 
-function computeDecision({ dxyScore, btmmScore, smcScore, assetBias, scenario, killZone }) {
+function detectEconomicNewsBlock() {
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+
+  const blockedHoursApprox = [
+    12, // US CPI/NFP/FOMC windows often impact here
+    13,
+    18  // central bank speeches / events often cluster later
+  ];
+
+  const blocked = blockedHoursApprox.includes(utcHour);
+
+  return {
+    blocked,
+    reason: blocked
+      ? "News macro potentielle détectée - filtre sécurité actif"
+      : null,
+    source: "internal_news_safety_filter"
+  };
+}
+
+function computeDecision({ dxyScore, btmmScore, smcScore, assetBias, scenario, killZone, newsBlocked }) {
   const total = dxyScore + btmmScore + smcScore;
+
+  if (newsBlocked) {
+    return {
+      total,
+      status: "NO TRADE",
+      finalDecision: "NO TRADE",
+      reason: "News macro / annonces économiques"
+    };
+  }
 
   if (!killZone) {
     return {
@@ -445,6 +539,15 @@ function computeDecision({ dxyScore, btmmScore, smcScore, assetBias, scenario, k
     };
   }
 
+  if (scenario === "Manipulation") {
+    return {
+      total,
+      status: "WAIT",
+      finalDecision: "WAIT",
+      reason: "Manipulation scenario detected"
+    };
+  }
+
   if (total < 35) {
     return {
       total,
@@ -463,15 +566,6 @@ function computeDecision({ dxyScore, btmmScore, smcScore, assetBias, scenario, k
     };
   }
 
-  if (scenario === "Manipulation") {
-    return {
-      total,
-      status: "WAIT",
-      finalDecision: "WAIT",
-      reason: "Manipulation scenario detected"
-    };
-  }
-
   return {
     total,
     status: total >= 46 ? "SNIPER TRADE" : "GOOD SETUP",
@@ -480,8 +574,8 @@ function computeDecision({ dxyScore, btmmScore, smcScore, assetBias, scenario, k
   };
 }
 
-function computeTradeLevels(symbol, livePrice, finalDecision, h1, h4) {
-  if (finalDecision !== "BUY" && finalDecision !== "SELL") {
+function computeTradeLevels(symbol, livePrice, finalDecision, lowerTf) {
+  if (!["BUY", "SELL"].includes(finalDecision)) {
     return {
       entry: null,
       stopLoss: null,
@@ -492,14 +586,14 @@ function computeTradeLevels(symbol, livePrice, finalDecision, h1, h4) {
   }
 
   const price = Number(livePrice);
-
   let risk = price * 0.002;
+
   if (symbol === "XAU/USD") risk = price * 0.003;
   if (symbol === "IXIC") risk = price * 0.004;
 
   if (finalDecision === "BUY") {
     const entry = price;
-    const stopLoss = Math.min(h1.swingLow || price - risk, price - risk);
+    const stopLoss = Math.min(lowerTf.swingLow || price - risk, price - risk);
     const tp1 = entry + (entry - stopLoss);
     const tp2 = entry + (entry - stopLoss) * 2;
     const tp3 = entry + (entry - stopLoss) * 5;
@@ -514,7 +608,7 @@ function computeTradeLevels(symbol, livePrice, finalDecision, h1, h4) {
   }
 
   const entry = price;
-  const stopLoss = Math.max(h1.swingHigh || price + risk, price + risk);
+  const stopLoss = Math.max(lowerTf.swingHigh || price + risk, price + risk);
   const tp1 = entry - (stopLoss - entry);
   const tp2 = entry - (stopLoss - entry) * 2;
   const tp3 = entry - (stopLoss - entry) * 5;
@@ -528,48 +622,189 @@ function computeTradeLevels(symbol, livePrice, finalDecision, h1, h4) {
   };
 }
 
-function buildAnalysisLines({ dxy, btmm, smc, scenario, decision }) {
-  const lines = [];
+function detectStyleConfig(style) {
+  const normalized = String(style || "AUTO").toUpperCase();
 
+  if (normalized === "SCALPING") {
+    return {
+      style: "SCALPING",
+      lowerInterval: "5min",
+      lowerLabel: "M5",
+      htf1: "1h",
+      htf2: "4h"
+    };
+  }
+
+  if (normalized === "INTRADING") {
+    return {
+      style: "INTRADING",
+      lowerInterval: "15min",
+      lowerLabel: "M15",
+      htf1: "1h",
+      htf2: "4h"
+    };
+  }
+
+  return {
+    style: "AUTO",
+    lowerInterval: "5min",
+    lowerLabel: "M5",
+    htf1: "1h",
+    htf2: "4h"
+  };
+}
+
+function buildAnalysisLines({ dxy, btmm, smc, scenario, decision, session, news }) {
+  const lines = [];
   lines.push(`DXY ${dxy.bias} (${dxy.score}/10) via ${dxy.source}`);
-  lines.push(`BTMM ${btmm.score}/30 - ${btmm.notes.slice(0, 2).join(", ") || "weak structure"}`);
-  lines.push(`SMC ${smc.score}/10 - ${smc.notes.slice(0, 2).join(", ") || "weak confirmation"}`);
+  lines.push(`BTMM ${btmm.score}/30`);
+  lines.push(`SMC ${smc.score}/10`);
+  lines.push(`Session: ${session}`);
   lines.push(`Scenario: ${scenario}`);
+
+  if (news?.blocked) {
+    lines.push(`News filter: ${news.reason}`);
+  } else {
+    lines.push(`News filter: clear`);
+  }
+
   lines.push(`Decision reason: ${decision.reason}`);
 
-  return lines.slice(0, 5);
+  return lines.slice(0, 6);
 }
 
 function buildTelegramMessage(result) {
   const tradeText =
     result.decision === "BUY" || result.decision === "SELL"
-      ? `📍 Entrée : ${result.tradeLevels.entry}
-🛑 Stop Loss : ${result.tradeLevels.stopLoss}
-🎯 TP1 : ${result.tradeLevels.tp1}
-🎯 TP2 : ${result.tradeLevels.tp2}
-🎯 TP3 : ${result.tradeLevels.tp3}`
-      : `📍 Entrée : -
-🛑 Stop Loss : -
-🎯 TP1 : -
-🎯 TP2 : -
-🎯 TP3 : -`;
+      ? `Entry: ${result.tradeLevels.entry}
+Stop Loss: ${result.tradeLevels.stopLoss}
+TP1: ${result.tradeLevels.tp1}
+TP2: ${result.tradeLevels.tp2}
+TP3: ${result.tradeLevels.tp3}`
+      : `Entry: -
+Stop Loss: -
+TP1: -
+TP2: -
+TP3: -`;
 
-  return `🎯 Décision : ${result.decision}
+  return `🚨 SNIPER SIGNAL ALERT
+${result.style}
 
-📊 Score :
-DXY : ${result.dxy.score}/10
-BTMM : ${result.btmm.score}/30
-SMC : ${result.smc.score}/10
-TOTAL : ${result.total}/50
+Asset: ${result.symbol}
+Decision: ${result.decision}
 
 ${tradeText}
 
-🧠 Scénario : ${result.scenario}
+Score:
+DXY: ${result.dxy.score}/10
+BTMM: ${result.btmm.score}/30
+SMC: ${result.smc.score}/10
+TOTAL: ${result.total}/50
 
-📊 Analyse :
+Scenario: ${result.scenario}
+Reason:
 - ${result.analysisLines.join("\n- ")}
 
-⚠️ Raison : ${result.reason}`;
+Status: ${result.status}`;
+}
+
+async function runAnalysis(symbolInput, requestedStyle = "AUTO") {
+  const symbol = normalizeSymbol(symbolInput || "XAUUSD");
+  const styleConfig = detectStyleConfig(requestedStyle);
+  const session = detectSession();
+  const killZone = isKillZoneActive();
+  const news = detectEconomicNewsBlock();
+
+  const quote = await fetchQuote(symbol);
+  if (quote.code) {
+    throw new Error(quote.message || "Unable to fetch quote");
+  }
+
+  const livePrice = Number(quote.close);
+
+  const [lowerRaw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
+    fetchTimeSeries(symbol, styleConfig.lowerInterval, 100),
+    fetchTimeSeries(symbol, "1h", 100),
+    fetchTimeSeries(symbol, "4h", 100),
+    fetchTimeSeries(symbol, "1day", 100),
+    fetchDxyData()
+  ]);
+
+  const lowerTf = analyzeStructure(parseCandles(lowerRaw.values || []));
+  const h1 = analyzeStructure(parseCandles(h1Raw.values || []));
+  const h4 = analyzeStructure(parseCandles(h4Raw.values || []));
+  const d1 = analyzeStructure(parseCandles(d1Raw.values || []));
+
+  const assetBias = computeAssetBias(symbol, dxy.bias, h1.bias, h4.bias);
+  const btmm = computeBtmmScore({ h1, h4, d1, killZone });
+  const smc = computeSmcScore({ h1, lowerTf, killZone });
+  const scenario = decideScenario(h1, h4, assetBias);
+
+  const decision = computeDecision({
+    dxyScore: dxy.score,
+    btmmScore: btmm.score,
+    smcScore: smc.score,
+    assetBias,
+    scenario,
+    killZone,
+    newsBlocked: news.blocked
+  });
+
+  const tradeLevels = computeTradeLevels(symbol, livePrice, decision.finalDecision, lowerTf);
+
+  const analysisLines = buildAnalysisLines({
+    dxy,
+    btmm,
+    smc,
+    scenario,
+    decision,
+    session,
+    news
+  });
+
+  return {
+    ok: true,
+    style: styleConfig.style,
+    symbol,
+    livePrice,
+    session,
+    killZone,
+    news,
+    dxy,
+    structure: {
+      lowerTf,
+      h1,
+      h4,
+      d1
+    },
+    assetBias,
+    btmm,
+    smc,
+    total: decision.total,
+    status: decision.status,
+    decision: decision.finalDecision,
+    reason: decision.reason,
+    scenario,
+    tradeLevels,
+    analysisLines
+  };
+}
+
+async function runAutoStyleAnalysis(symbolInput) {
+  const scalping = await runAnalysis(symbolInput, "SCALPING");
+  const intrading = await runAnalysis(symbolInput, "INTRADING");
+
+  const validScalp = ["BUY", "SELL"].includes(scalping.decision);
+  const validIntra = ["BUY", "SELL"].includes(intrading.decision);
+
+  if (validScalp && validIntra) {
+    return scalping.total >= intrading.total ? scalping : intrading;
+  }
+
+  if (validScalp) return scalping;
+  if (validIntra) return intrading;
+
+  return scalping.total >= intrading.total ? scalping : intrading;
 }
 
 app.get("/price", async (req, res) => {
@@ -600,79 +835,15 @@ app.get("/price", async (req, res) => {
 
 app.get("/analyze", async (req, res) => {
   try {
-    const symbol = normalizeSymbol(req.query.symbol || "XAUUSD");
+    const symbol = req.query.symbol || "XAUUSD";
+    const style = req.query.style || "AUTO";
 
-    const quote = await fetchQuote(symbol);
-    if (quote.code) {
-      return res.status(400).json({
-        ok: false,
-        message: quote.message || "Unable to fetch quote"
-      });
-    }
+    const result =
+      String(style).toUpperCase() === "AUTO"
+        ? await runAutoStyleAnalysis(symbol)
+        : await runAnalysis(symbol, style);
 
-    const livePrice = Number(quote.close);
-
-    const [m5Raw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
-      fetchTimeSeries(symbol, "5min", 50),
-      fetchTimeSeries(symbol, "1h", 50),
-      fetchTimeSeries(symbol, "4h", 50),
-      fetchTimeSeries(symbol, "1day", 50),
-      fetchDxyData()
-    ]);
-
-    const m5 = analyzeStructure(parseCandles(m5Raw.values || []));
-    const h1 = analyzeStructure(parseCandles(h1Raw.values || []));
-    const h4 = analyzeStructure(parseCandles(h4Raw.values || []));
-    const d1 = analyzeStructure(parseCandles(d1Raw.values || []));
-
-    const killZone = isKillZoneActive();
-    const assetBias = computeAssetBias(symbol, dxy.bias, h1.bias, h4.bias);
-    const btmm = computeBtmmScore({ h1, h4, d1, killZone });
-    const smc = computeSmcScore({ h1, m5, killZone });
-    const scenario = decideScenario(h1, h4, assetBias);
-
-    const decision = computeDecision({
-      dxyScore: dxy.score,
-      btmmScore: btmm.score,
-      smcScore: smc.score,
-      assetBias,
-      scenario,
-      killZone
-    });
-
-    const tradeLevels = computeTradeLevels(symbol, livePrice, decision.finalDecision, h1, h4);
-    const analysisLines = buildAnalysisLines({
-      dxy,
-      btmm,
-      smc,
-      scenario,
-      decision
-    });
-
-    return res.json({
-      ok: true,
-      symbol,
-      livePrice,
-      session: detectSession(),
-      killZone,
-      dxy,
-      structure: {
-        m5,
-        h1,
-        h4,
-        d1
-      },
-      assetBias,
-      btmm,
-      smc,
-      total: decision.total,
-      status: decision.status,
-      decision: decision.finalDecision,
-      reason: decision.reason,
-      scenario,
-      tradeLevels,
-      analysisLines
-    });
+    return res.json(result);
   } catch (error) {
     return res.status(500).json({
       ok: false,
@@ -684,94 +855,4 @@ app.get("/analyze", async (req, res) => {
 
 app.get("/send-signal", async (req, res) => {
   try {
-    const symbol = normalizeSymbol(req.query.symbol || "XAUUSD");
-
-    const quote = await fetchQuote(symbol);
-    if (quote.code) {
-      return res.status(400).json({
-        ok: false,
-        message: quote.message || "Unable to fetch quote"
-      });
-    }
-
-    const livePrice = Number(quote.close);
-
-    const [m5Raw, h1Raw, h4Raw, d1Raw, dxy] = await Promise.all([
-      fetchTimeSeries(symbol, "5min", 50),
-      fetchTimeSeries(symbol, "1h", 50),
-      fetchTimeSeries(symbol, "4h", 50),
-      fetchTimeSeries(symbol, "1day", 50),
-      fetchDxyData()
-    ]);
-
-    const m5 = analyzeStructure(parseCandles(m5Raw.values || []));
-    const h1 = analyzeStructure(parseCandles(h1Raw.values || []));
-    const h4 = analyzeStructure(parseCandles(h4Raw.values || []));
-    const d1 = analyzeStructure(parseCandles(d1Raw.values || []));
-
-    const killZone = isKillZoneActive();
-    const assetBias = computeAssetBias(symbol, dxy.bias, h1.bias, h4.bias);
-    const btmm = computeBtmmScore({ h1, h4, d1, killZone });
-    const smc = computeSmcScore({ h1, m5, killZone });
-    const scenario = decideScenario(h1, h4, assetBias);
-
-    const decision = computeDecision({
-      dxyScore: dxy.score,
-      btmmScore: btmm.score,
-      smcScore: smc.score,
-      assetBias,
-      scenario,
-      killZone
-    });
-
-    const tradeLevels = computeTradeLevels(symbol, livePrice, decision.finalDecision, h1, h4);
-    const analysisLines = buildAnalysisLines({
-      dxy,
-      btmm,
-      smc,
-      scenario,
-      decision
-    });
-
-    const result = {
-      symbol,
-      decision: decision.finalDecision,
-      total: decision.total,
-      reason: decision.reason,
-      scenario,
-      dxy,
-      btmm,
-      smc,
-      tradeLevels,
-      analysisLines
-    };
-
-    const message = buildTelegramMessage(result);
-
-    const telegramResponse = await axios.post(
-      `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`,
-      {
-        chat_id: CHAT_ID,
-        text: message
-      }
-    );
-
-    return res.json({
-      ok: true,
-      sent: true,
-      result,
-      telegram: telegramResponse.data
-    });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: error.message,
-      telegramStatus: error.response?.status || null,
-      telegramData: error.response?.data || null
-    });
-  }
-});
-
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Server running 🚀");
-});
+    const symbol = 
