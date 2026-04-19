@@ -52,12 +52,12 @@ function normalizeSymbol(input) {
   const value = String(input).toUpperCase();
 
   const map = {
-    "EURUSD": "EUR/USD",
-    "GBPUSD": "GBP/USD",
-    "XAUUSD": "XAU/USD",
-    "NAS100": "IXIC",
-    "DXY": "DXY",
-    "UUP": "UUP"
+    EURUSD: "EUR/USD",
+    GBPUSD: "GBP/USD",
+    XAUUSD: "XAU/USD",
+    NAS100: "IXIC",
+    DXY: "DXY",
+    UUP: "UUP"
   };
 
   return map[value] || value;
@@ -136,6 +136,92 @@ async function fetchDxyData() {
   };
 }
 
+function parseCandles(values = []) {
+  return values.map((candle) => ({
+    datetime: candle.datetime,
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close),
+    volume: candle.volume ? Number(candle.volume) : null
+  }));
+}
+
+function analyzeStructure(candles = []) {
+  if (!candles || candles.length < 10) {
+    return {
+      bias: "neutral",
+      high: null,
+      low: null,
+      lastClose: null,
+      momentum: "weak"
+    };
+  }
+
+  const recent = candles.slice(0, 10);
+  const last = recent[0];
+  const first = recent[recent.length - 1];
+
+  const highestHigh = Math.max(...recent.map((c) => c.high));
+  const lowestLow = Math.min(...recent.map((c) => c.low));
+
+  let bias = "neutral";
+  if (last.close > first.close) bias = "bullish";
+  if (last.close < first.close) bias = "bearish";
+
+  const range = highestHigh - lowestLow;
+  const move = Math.abs(last.close - first.close);
+
+  let momentum = "weak";
+  if (range > 0 && move / range > 0.3) momentum = "moderate";
+  if (range > 0 && move / range > 0.55) momentum = "strong";
+
+  return {
+    bias,
+    high: highestHigh,
+    low: lowestLow,
+    lastClose: last.close,
+    momentum
+  };
+}
+
+function buildAssetBias(symbol, dxyBias) {
+  if (["EUR/USD", "GBP/USD", "XAU/USD"].includes(symbol)) {
+    if (dxyBias === "bearish") return "bullish";
+    if (dxyBias === "bullish") return "bearish";
+  }
+
+  if (symbol === "IXIC") {
+    if (dxyBias === "bearish") return "bullish";
+    if (dxyBias === "bullish") return "bearish";
+  }
+
+  return "neutral";
+}
+
+function scorePreAnalysis(dxy, h1, h4, assetBias) {
+  let score = 0;
+
+  if (dxy.ok && dxy.score >= 7) score += 10;
+  if (h1.bias !== "neutral") score += 5;
+  if (h4.bias !== "neutral") score += 5;
+  if (h1.momentum === "moderate") score += 3;
+  if (h1.momentum === "strong") score += 5;
+  if (h4.momentum === "moderate") score += 3;
+  if (h4.momentum === "strong") score += 5;
+  if (assetBias === h1.bias) score += 8;
+  if (assetBias === h4.bias) score += 9;
+
+  if (score > 50) score = 50;
+
+  let status = "NO TRADE";
+  if (score >= 35 && score <= 40) status = "WAIT";
+  if (score >= 41 && score <= 45) status = "GOOD SETUP";
+  if (score >= 46) status = "SNIPER TRADE";
+
+  return { score, status };
+}
+
 app.get("/dxy", async (req, res) => {
   try {
     const dxy = await fetchDxyData();
@@ -198,14 +284,7 @@ app.get("/candles/:symbol/:interval", async (req, res) => {
       });
     }
 
-    const values = (data.values || []).map((candle) => ({
-      datetime: candle.datetime,
-      open: Number(candle.open),
-      high: Number(candle.high),
-      low: Number(candle.low),
-      close: Number(candle.close),
-      volume: candle.volume ? Number(candle.volume) : null
-    }));
+    const values = parseCandles(data.values || []);
 
     res.json({
       ok: true,
@@ -214,6 +293,67 @@ app.get("/candles/:symbol/:interval", async (req, res) => {
       source: "TWELVEDATA",
       count: values.length,
       candles: values
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message
+    });
+  }
+});
+
+app.get("/analyze/:symbol", async (req, res) => {
+  try {
+    const symbol = normalizeSymbol(req.params.symbol);
+
+    const [dxy, quote, h1Raw, h4Raw] = await Promise.all([
+      fetchDxyData(),
+      fetchQuote(symbol),
+      fetchTimeSeries(symbol, "1h", 50),
+      fetchTimeSeries(symbol, "4h", 50)
+    ]);
+
+    if (quote.code) {
+      return res.status(400).json({
+        ok: false,
+        symbol,
+        message: quote.message || "Quote unavailable"
+      });
+    }
+
+    if (h1Raw.code || h4Raw.code) {
+      return res.status(400).json({
+        ok: false,
+        symbol,
+        message: "Candles unavailable for analysis"
+      });
+    }
+
+    const h1Candles = parseCandles(h1Raw.values || []);
+    const h4Candles = parseCandles(h4Raw.values || []);
+
+    const h1 = analyzeStructure(h1Candles);
+    const h4 = analyzeStructure(h4Candles);
+    const assetBias = buildAssetBias(symbol, dxy.bias);
+    const scored = scorePreAnalysis(dxy, h1, h4, assetBias);
+
+    res.json({
+      ok: true,
+      symbol,
+      livePrice: Number(quote.close),
+      dxy,
+      structure: {
+        h1,
+        h4
+      },
+      assetBias,
+      preAnalysis: scored,
+      scenario:
+        scored.status === "SNIPER TRADE"
+          ? "Continuation"
+          : scored.status === "GOOD SETUP"
+          ? "Developing"
+          : "Unclear"
     });
   } catch (error) {
     res.status(500).json({
