@@ -2,20 +2,16 @@ import axios from "axios";
 
 const API_BASE_URL = process.env.API_BASE_URL;
 
-function formatScanLine(result) {
-  const symbol = result?.symbol || "UNKNOWN";
-  const decision = result?.decision || "UNKNOWN";
-  const total = result?.total ?? "N/A";
-  const status = result?.status || "NO_STATUS";
-  const reason = result?.reason || "No reason";
+async function runScan() {
+  try {
+    console.log("🚀 SCAN JOB STARTED");
 
-  return `[SCAN RESULT] ${symbol} | ${decision} | ${total}/50 | ${status} | ${reason}`;
+    const response = await axios.get(`${API_BASE_URL}/scan`);
+
+    console.log("✅ Scan result:", response.data);
+  } catch (error) {
+    console.error("❌ Scan error:", error.message);
+  }
 }
 
-function printScanSummary(data) {
-  if (!data) {
-    console.log("SCAN SUMMARY: empty response");
-    return;
-  }
-
-  if
+runScan();
