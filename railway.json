@@ -4,6 +4,6 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "node scan-job.js"
+    "startCommand": "node src/server.js"
   }
 }
