@@ -539,17 +539,148 @@ function decideScenario(h1, h4, assetBias) {
   return "Manipulation";
 }
 
-function computeDecision({ styleConfig, dxyScore, btmmScore, smcScore, assetBias, scenario, killZone, volatility }) {
+function computeDecision({
+  styleConfig,
+  dxyScore,
+  btmmScore,
+  smcScore,
+  assetBias,
+  scenario,
+  killZone,
+  volatility
+}) {
   const total = dxyScore + btmmScore + smcScore;
 
+  let state = "NO_SEND";
+  let finalDecision = "NO TRADE";
+  let status = "NO TRADE";
+  let reason = "Conditions not satisfied";
+
   if (!killZone) {
+    state = "NO_SEND";
+    status = "OFF SESSION";
+    reason = "Kill zone inactive";
+
     return {
       total,
-      status: "ATTENDS",
-      finalDecision: "ATTENDS",
-      reason: "Kill zone inactive"
+      state,
+      status,
+      finalDecision,
+      reason
     };
   }
+
+  if (!volatility.tradable) {
+    state = "NO_SEND";
+    status = "VOLATILITY BLOCK";
+    reason = volatility.reason;
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (dxyScore < styleConfig.minDxy) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "DXY below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (btmmScore < styleConfig.minBtmm) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "BTMM below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (smcScore < styleConfig.minSmc) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "SMC below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (assetBias === "neutral") {
+    state = "WATCHLIST";
+    status = "WATCHLIST";
+    reason = "Asset bias unclear";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (scenario === "Manipulation") {
+    state = "WATCHLIST";
+    status = "WATCHLIST";
+    reason = "Manipulation scenario detected";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (total < 38) {
+    state = "WATCHLIST";
+    status = "WATCHLIST";
+    reason = "Setup exists but score is still too low";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  state = "SIGNAL";
+  status = total >= 44 ? "SNIPER SIGNAL" : "VALID SIGNAL";
+  finalDecision = assetBias === "bullish" ? "BUY" : "SELL";
+  reason = "All major filters aligned";
+
+  return {
+    total,
+    state,
+    status,
+    finalDecision,
+    reason
+  };
+}
 
   if (!volatility.tradable) {
     return {
