@@ -1252,19 +1252,28 @@ app.get("/send-signal", async (req, res) => {
     const style = req.query.style || "AUTO";
 
     const result =
-      String(style).toUpperCase() === "AUTO"
-        ? await runAutoAnalysis(symbol)
-        : await runAnalysis(symbol, style);
+  String(style).toUpperCase() === "AUTO"
+    ? await runAutoAnalysis(symbol)
+    : await runAnalysis(symbol, style);
 
-    const message = buildTelegramMessage(result);
-    const telegram = await sendTelegramMessage(message);
+if (result.state !== "SIGNAL" || !["BUY", "SELL"].includes(result.decision)) {
+  return res.json({
+    ok: true,
+    sent: false,
+    result,
+    message: "No signal sent. Setup is not strong enough."
+  });
+}
 
-    res.json({
-      ok: true,
-      sent: true,
-      result,
-      telegram
-    });
+const message = buildTelegramMessage(result);
+const telegram = await sendTelegramMessage(message);
+
+res.json({
+  ok: true,
+  sent: true,
+  result,
+  telegram
+});
   } catch (error) {
     res.status(500).json({
       ok: false,
@@ -1288,10 +1297,10 @@ app.get("/scan-all-live", async (req, res) => {
 
       results.push(result);
 
-      if (["BUY", "SELL"].includes(result.decision)) {
-        const message = buildTelegramMessage(result);
-        await sendTelegramMessage(message);
-      }
+     if (result.state === "SIGNAL" && ["BUY", "SELL"].includes(result.decision)) {
+  const message = buildTelegramMessage(result);
+  await sendTelegramMessage(message);
+}
     }
 
     res.json({
