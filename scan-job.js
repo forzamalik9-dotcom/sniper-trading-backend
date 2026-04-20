@@ -10,9 +10,10 @@ async function runScan() {
       throw new Error("API_BASE_URL is missing");
     }
 
-    const response = await axios.get(`${API_BASE_URL}/scan-all-live?style=AUTO`, {
-      timeout: 15000
-    });
+    const response = await axios.get(
+      `${API_BASE_URL}/scan-all-live?style=AUTO`,
+      { timeout: 15000 }
+    );
 
     console.log("SCAN OK");
     console.log(JSON.stringify(response.data, null, 2));
