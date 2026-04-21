@@ -1207,31 +1207,31 @@ app.get("/health", (req, res) => {
   });
 });
 
-app.get("/send-test", async (req, res) => {
-  try {
-    const telegram = await sendTelegramMessage("✅ Test Telegram réussi depuis SNIPER ELITE AI");
-    res.json({ ok: true, telegram });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      message: error.message,
-      telegramStatus: error.response?.status || null,
-      telegramData: error.response?.data || null
-    });
-  }
-});
-
 app.get("/price", async (req, res) => {
   try {
-    const symbol = normalizeSymbol(req.query.symbol || "EUR/USD");
+    const symbol = normalizeSymbol(req.query.symbol);
     const quote = await fetchQuote(symbol);
 
     if (quote.code) {
       return res.status(400).json({
         ok: false,
-        message: quote.message || "Unable to fetch quote"
+        message: quote.message || "Unable to fetch price"
       });
     }
+
+    return res.json({
+      ok: true,
+      symbol,
+      livePrice: toNum(quote.close)
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      message: error.message
+    });
+  }
+});
 
     return res.json({
       ok: true,
