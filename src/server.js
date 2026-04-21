@@ -639,6 +639,106 @@ function computeDecision({
       reason
     };
   }
+   function computeDecision({
+  styleConfig,
+  dxyScore,
+  btmmScore,
+  smcScore,
+  assetBias,
+  scenario,
+  killZone,
+  volatility
+}) {
+  const total = dxyScore + btmmScore + smcScore;
+
+  let state = "NO_SEND";
+  let finalDecision = "NO TRADE";
+  let status = "NO TRADE";
+  let reason = "Conditions not satisfied";
+
+  if (!killZone) {
+    state = "NO_SEND";
+    status = "OFF SESSION";
+    reason = "Kill zone inactive";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (!volatility.tradable) {
+    state = "NO_SEND";
+    status = "VOLATILITY BLOCK";
+    reason = volatility.reason;
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (dxyScore < styleConfig.minDxy) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "DXY below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (btmmScore < styleConfig.minBtmm) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "BTMM below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (smcScore < styleConfig.minSmc) {
+    state = "NO_SEND";
+    status = "NO TRADE";
+    reason = "SMC below required threshold";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
+
+  if (assetBias === "neutral") {
+    state = "WATCHLIST";
+    status = "WATCHLIST";
+    reason = "Asset bias unclear";
+
+    return {
+      total,
+      state,
+      status,
+      finalDecision,
+      reason
+    };
+  }
 
   if (scenario === "Manipulation") {
     state = "WATCHLIST";
@@ -681,86 +781,7 @@ function computeDecision({
     reason
   };
 }
-
-  if (!volatility.tradable) {
-    return {
-      total,
-      status: "POST-NEWS VOLATILITY",
-      finalDecision: "ATTENDS",
-      reason: volatility.reason
-    };
-  }
-
-  if (dxyScore < styleConfig.minDxy) {
-    return {
-      total,
-      status: "NO TRADE",
-      finalDecision: "NO TRADE",
-      reason: "DXY below required threshold"
-    };
-  }
-
-  if (btmmScore < styleConfig.minBtmm) {
-    return {
-      total,
-      status: "NO TRADE",
-      finalDecision: "NO TRADE",
-      reason: "BTMM below required threshold"
-    };
-  }
-
-  if (smcScore < styleConfig.minSmc) {
-    return {
-      total,
-      status: "NO TRADE",
-      finalDecision: "NO TRADE",
-      reason: "SMC below required threshold"
-    };
-  }
-
-  if (assetBias === "neutral") {
-    return {
-      total,
-      status: "ATTENDS",
-      finalDecision: "ATTENDS",
-      reason: "Asset bias unclear"
-    };
-  }
-
-  if (scenario === "Manipulation") {
-    return {
-      total,
-      status: "ATTENDS",
-      finalDecision: "ATTENDS",
-      reason: "Manipulation scenario detected"
-    };
-  }
-
-  if (total < 35) {
-    return {
-      total,
-      status: "NO TRADE",
-      finalDecision: "NO TRADE",
-      reason: "Total score too low"
-    };
-  }
-
-  if (total >= 35 && total <= 40) {
-    return {
-      total,
-      status: "ATTENDS",
-      finalDecision: "ATTENDS",
-      reason: "Setup not strong enough yet"
-    };
-  }
-
-  return {
-    total,
-    status: total >= 46 ? "SNIPER TRADE" : "VALID SETUP",
-    finalDecision: assetBias === "bullish" ? "BUY" : "SELL",
-    reason: "All major filters aligned"
-  };
-}
+  
 
 // =========================
 // TRADE LEVELS
